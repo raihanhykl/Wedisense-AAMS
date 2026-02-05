@@ -1,5 +1,6 @@
-import eslint from "@eslint/js";
-import tseslint from "typescript-eslint";
+import eslint from '@eslint/js';
+import globals from 'globals';
+import tseslint from 'typescript-eslint';
 
 export default tseslint.config(
   eslint.configs.recommended,
@@ -7,24 +8,38 @@ export default tseslint.config(
   {
     languageOptions: {
       ecmaVersion: 2022,
-      sourceType: "module",
+      sourceType: 'module',
+      globals: {
+        ...globals.node,
+        ...globals.es2022,
+      },
       parserOptions: {
-        project: "./tsconfig.json",
+        project: './tsconfig.json',
+        tsconfigRootDir: import.meta.dirname,
       },
     },
     rules: {
-      "@typescript-eslint/no-unused-vars": [
-        "error",
+      // TypeScript specific rules
+      '@typescript-eslint/no-unused-vars': [
+        'error',
         {
-          argsIgnorePattern: "^_",
-          varsIgnorePattern: "^_",
+          argsIgnorePattern: '^_',
+          varsIgnorePattern: '^_',
         },
       ],
-      "@typescript-eslint/no-explicit-any": "error",
-      "no-console": ["warn", { allow: ["warn", "error", "info"] }],
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/explicit-function-return-type': 'off',
+      '@typescript-eslint/explicit-module-boundary-types': 'off',
+      '@typescript-eslint/no-non-null-assertion': 'warn',
+
+      // General rules
+      'no-console': ['warn', { allow: ['warn', 'error', 'info'] }],
+      'prefer-const': 'error',
+      'no-var': 'error',
+      eqeqeq: ['error', 'always'],
     },
   },
   {
-    ignores: ["dist/**", "node_modules/**"],
-  },
+    ignores: ['dist/**', 'node_modules/**', 'coverage/**', '*.js', '*.mjs'],
+  }
 );
