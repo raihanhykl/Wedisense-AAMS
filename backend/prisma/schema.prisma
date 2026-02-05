@@ -1,0 +1,535 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  // url      = env("DATABASE_URL")
+}
+
+// ============================================================================
+// TENANT & USER MODELS
+// ============================================================================
+
+model Tenant {
+  id        String   @id @default(cuid())
+  name      String // Company name
+  slug      String   @unique // URL-friendly identifier
+  logo      String?
+  config    Json     @default("{}") // Theme, feature flags, etc.
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  users        User[]
+  assets       Asset[]
+  categories   Category[]
+  locations    Location[]
+  vendors      Vendor[]
+  maintenances Maintenance[]
+  alerts       Alert[]
+  activityLogs ActivityLog[]
+
+  @@map("tenants")
+}
+
+model User {
+  id           String    @id @default(cuid())
+  tenantId     String
+  email        String
+  passwordHash String
+  name         String
+  role         UserRole  @default(STAFF)
+  department   String?
+  phone        String?
+  avatar       String?
+  isActive     Boolean   @default(true)
+  lastLoginAt  DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  // Relations
+  tenant          Tenant         @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assignedAssets  Assignment[]   @relation("AssignedUser")
+  createdAssets   Asset[]        @relation("CreatedByUser")
+  maintenanceLogs Maintenance[]  @relation("PerformedByUser")
+  approvals       Disposal[]     @relation("ApprovedByUser")
+  aiLogs          AILog[]
+  refreshTokens   RefreshToken[]
+
+  @@unique([tenantId, email])
+  @@index([tenantId])
+  @@index([email])
+  @@map("users")
+}
+
+enum UserRole {
+  SUPER_ADMIN // Full access including tenant management
+  ADMIN // Full access within tenant
+  MANAGER // View, approve, reports
+  STAFF // CRUD assets with limited admin
+  VIEWER // Read-only access
+}
+
+model RefreshToken {
+  id        String   @id @default(cuid())
+  userId    String
+  token     String   @unique
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([token])
+  @@map("refresh_tokens")
+}
+
+// ============================================================================
+// CATEGORY & LOCATION MODELS
+// ============================================================================
+
+model Category {
+  id          String  @id @default(cuid())
+  tenantId    String
+  name        String
+  description String?
+  icon        String? // Lucide icon name
+  color       String? // Hex color
+
+  // Self-relation for hierarchy
+  parentId String?
+  parent   Category?  @relation("CategoryHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Category[] @relation("CategoryHierarchy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assets Asset[]
+
+  @@unique([tenantId, name, parentId])
+  @@index([tenantId])
+  @@map("categories")
+}
+
+model Location {
+  id         String  @id @default(cuid())
+  tenantId   String
+  name       String
+  address    String?
+  city       String?
+  province   String?
+  postalCode String?
+  latitude   Float?
+  longitude  Float?
+
+  // Self-relation for hierarchy (Building > Floor > Room)
+  parentId String?
+  parent   Location?  @relation("LocationHierarchy", fields: [parentId], references: [id], onDelete: SetNull)
+  children Location[] @relation("LocationHierarchy")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assets Asset[]
+
+  @@unique([tenantId, name, parentId])
+  @@index([tenantId])
+  @@map("locations")
+}
+
+// ============================================================================
+// VENDOR MODEL
+// ============================================================================
+
+model Vendor {
+  id          String  @id @default(cuid())
+  tenantId    String
+  name        String
+  contactName String?
+  email       String?
+  phone       String?
+  address     String?
+  website     String?
+  notes       String?
+  isActive    Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  assets       Asset[]
+  maintenances Maintenance[]
+  warranties   Warranty[]
+
+  @@unique([tenantId, name])
+  @@index([tenantId])
+  @@map("vendors")
+}
+
+// ============================================================================
+// ASSET MODEL (CORE)
+// ============================================================================
+
+model Asset {
+  id                  String         @id @default(cuid())
+  tenantId            String
+  code                String // Asset code like WDS-IT-001
+  name                String
+  description         String?
+  categoryId          String
+  locationId          String?
+  vendorId            String?
+  purchaseDate        DateTime?
+  purchasePrice       Decimal?       @db.Decimal(15, 2)
+  purchaseOrderNumber String?
+  brand               String?
+  model               String?
+  serialNumber        String?
+  specifications      Json? // Flexible specs storage
+  status              AssetStatus    @default(AVAILABLE)
+  condition           AssetCondition @default(GOOD)
+  usefulLifeMonths    Int?
+  residualValue       Decimal?       @db.Decimal(15, 2)
+  depreciationMethod  String? // straight_line, declining_balance
+  qrCode              String?
+  createdById         String
+  isActive            Boolean        @default(true)
+  notes               String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant       Tenant        @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  category     Category      @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  location     Location?     @relation(fields: [locationId], references: [id], onDelete: SetNull)
+  vendor       Vendor?       @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+  createdBy    User          @relation("CreatedByUser", fields: [createdById], references: [id], onDelete: Restrict)
+  assignments  Assignment[]
+  maintenances Maintenance[]
+  warranties   Warranty[]
+  documents    Document[]
+  disposal     Disposal?
+
+  @@unique([tenantId, code])
+  @@index([tenantId, status])
+  @@index([tenantId, categoryId])
+  @@index([tenantId, locationId])
+  @@index([tenantId, code])
+  @@map("assets")
+}
+
+enum AssetStatus {
+  AVAILABLE // Ready to use
+  IN_USE // Currently assigned
+  MAINTENANCE // Under maintenance
+  RESERVED // Reserved for future use
+  DISPOSED // No longer in use
+  LOST // Missing
+}
+
+enum AssetCondition {
+  EXCELLENT
+  GOOD
+  FAIR
+  POOR
+  DAMAGED
+}
+
+// ============================================================================
+// ASSIGNMENT MODEL
+// ============================================================================
+
+model Assignment {
+  id                 String          @id @default(cuid())
+  assetId            String
+  userId             String
+  assignedAt         DateTime        @default(now())
+  expectedReturnDate DateTime?
+  returnedAt         DateTime?
+  assignmentNotes    String?
+  returnNotes        String?
+  returnCondition    AssetCondition?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  user  User  @relation("AssignedUser", fields: [userId], references: [id], onDelete: Restrict)
+
+  @@index([assetId])
+  @@index([userId])
+  @@map("assignments")
+}
+
+// ============================================================================
+// MAINTENANCE MODEL
+// ============================================================================
+
+model Maintenance {
+  id            String            @id @default(cuid())
+  tenantId      String
+  assetId       String
+  type          MaintenanceType
+  title         String
+  description   String?
+  scheduledDate DateTime
+  completedDate DateTime?
+  status        MaintenanceStatus @default(SCHEDULED)
+  performedById String?
+  vendorId      String?
+  estimatedCost Decimal?          @db.Decimal(15, 2)
+  actualCost    Decimal?          @db.Decimal(15, 2)
+  findings      String?
+  actions       String?
+  notes         String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  tenant      Tenant  @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+  asset       Asset   @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  performedBy User?   @relation("PerformedByUser", fields: [performedById], references: [id], onDelete: SetNull)
+  vendor      Vendor? @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+
+  @@index([tenantId])
+  @@index([assetId])
+  @@index([status])
+  @@index([scheduledDate])
+  @@map("maintenances")
+}
+
+enum MaintenanceType {
+  PREVENTIVE // Scheduled maintenance
+  CORRECTIVE // Repair after failure
+  INSPECTION // Regular inspection
+  CALIBRATION // Equipment calibration
+  UPGRADE // Improvements
+}
+
+enum MaintenanceStatus {
+  SCHEDULED
+  IN_PROGRESS
+  COMPLETED
+  CANCELLED
+  OVERDUE
+}
+
+// ============================================================================
+// WARRANTY MODEL
+// ============================================================================
+
+model Warranty {
+  id           String   @id @default(cuid())
+  assetId      String
+  vendorId     String?
+  type         String? // e.g., "Manufacturer", "Extended"
+  startDate    DateTime
+  endDate      DateTime
+  terms        String?
+  contactInfo  String?
+  claimProcess String?
+  documentUrl  String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  asset  Asset   @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  vendor Vendor? @relation(fields: [vendorId], references: [id], onDelete: SetNull)
+
+  @@index([assetId])
+  @@index([endDate])
+  @@map("warranties")
+}
+
+// ============================================================================
+// DOCUMENT MODEL
+// ============================================================================
+
+model Document {
+  id            String       @id @default(cuid())
+  assetId       String
+  type          DocumentType
+  name          String
+  fileName      String
+  filePath      String
+  fileSize      Int // In bytes
+  mimeType      String
+  extractedData Json? // OCR results
+
+  uploadedAt DateTime @default(now())
+
+  // Relations
+  asset Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([assetId])
+  @@map("documents")
+}
+
+enum DocumentType {
+  INVOICE
+  WARRANTY_CERT
+  MANUAL
+  PHOTO
+  CONTRACT
+  MAINTENANCE_REPORT
+  OTHER
+}
+
+// ============================================================================
+// DISPOSAL MODEL
+// ============================================================================
+
+model Disposal {
+  id              String          @id @default(cuid())
+  assetId         String          @unique
+  reason          String
+  requestedAt     DateTime        @default(now())
+  status          DisposalStatus  @default(PENDING)
+  approvedById    String?
+  approvedAt      DateTime?
+  rejectionReason String?
+  method          DisposalMethod?
+  disposedAt      DateTime?
+  disposalValue   Decimal?        @db.Decimal(15, 2)
+  disposalNotes   String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  asset      Asset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+  approvedBy User? @relation("ApprovedByUser", fields: [approvedById], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@map("disposals")
+}
+
+enum DisposalMethod {
+  SOLD
+  DONATED
+  RECYCLED
+  SCRAPPED
+  RETURNED_TO_VENDOR
+  OTHER
+}
+
+enum DisposalStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  COMPLETED
+}
+
+// ============================================================================
+// AI LOG MODEL
+// ============================================================================
+
+model AILog {
+  id            String  @id @default(cuid())
+  userId        String
+  query         String
+  intent        String?
+  response      String
+  functionsUsed Json?
+  inputTokens   Int?
+  outputTokens  Int?
+  latencyMs     Int?
+  model         String?
+
+  createdAt DateTime @default(now())
+
+  // Relations
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([createdAt])
+  @@map("ai_logs")
+}
+
+// ============================================================================
+// ALERT MODEL
+// ============================================================================
+
+model Alert {
+  id          String        @id @default(cuid())
+  tenantId    String
+  type        AlertType
+  priority    AlertPriority @default(MEDIUM)
+  title       String
+  message     String
+  assetId     String?
+  metadata    Json?
+  isRead      Boolean       @default(false)
+  isDismissed Boolean       @default(false)
+
+  createdAt DateTime  @default(now())
+  expiresAt DateTime?
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([type])
+  @@index([isRead])
+  @@map("alerts")
+}
+
+enum AlertType {
+  WARRANTY_EXPIRING
+  MAINTENANCE_DUE
+  MAINTENANCE_OVERDUE
+  ASSET_IDLE
+  ANOMALY_DETECTED
+  SYSTEM
+}
+
+enum AlertPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// ============================================================================
+// ACTIVITY LOG MODEL
+// ============================================================================
+
+model ActivityLog {
+  id           String  @id @default(cuid())
+  tenantId     String
+  userId       String?
+  action       String // CREATE, UPDATE, DELETE, LOGIN, etc.
+  entity       String // Table name
+  entityId     String?
+  description  String
+  previousData Json?
+  newData      Json?
+  ipAddress    String?
+  userAgent    String?
+
+  createdAt DateTime @default(now())
+
+  // Relations
+  tenant Tenant @relation(fields: [tenantId], references: [id], onDelete: Cascade)
+
+  @@index([tenantId])
+  @@index([userId])
+  @@index([entity])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
