@@ -1,0 +1,83 @@
+services:
+  # ============================================
+  # PostgreSQL Database
+  # ============================================
+  db:
+    image: postgres:15-alpine
+    container_name: wedisense_db
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${DB_USER:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-wedisense_ams}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "pg_isready -U ${DB_USER:-postgres} -d ${DB_NAME:-wedisense_ams}",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ============================================
+  # Backend API (Development)
+  # ============================================
+  backend:
+    build:
+      context: ./backend
+      target: development
+    container_name: wedisense_backend
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      NODE_ENV: development
+      PORT: 4000
+      DATABASE_URL: postgresql://${DB_USER:-postgres}:${DB_PASSWORD:-postgres}@db:5432/${DB_NAME:-wedisense_ams}?schema=public
+      JWT_ACCESS_SECRET: ${JWT_ACCESS_SECRET:-wedisense-dev-access-secret-key}
+      JWT_REFRESH_SECRET: ${JWT_REFRESH_SECRET:-wedisense-dev-refresh-secret-key}
+      JWT_ACCESS_EXPIRY: 15m
+      JWT_REFRESH_EXPIRY: 7d
+      FRONTEND_URL: http://localhost:3000
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+    ports:
+      - "4000:4000"
+    volumes:
+      - ./backend/src:/app/src:ro
+      - ./backend/prisma:/app/prisma
+      - backend_uploads:/app/uploads
+    command: npm run dev
+
+  # ============================================
+  # Frontend (Development)
+  # ============================================
+  frontend:
+    build:
+      context: ./frontend
+      target: development
+    container_name: wedisense_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:4000/api
+      NEXT_PUBLIC_APP_URL: http://localhost:3000
+      NEXT_PUBLIC_TENANT_SLUG: wedison
+      NEXT_PUBLIC_ENABLE_AI: "true"
+      NEXT_PUBLIC_ENABLE_OFFLINE: "true"
+      NEXT_PUBLIC_ENABLE_QR: "true"
+    ports:
+      - "3000:3000"
+    volumes:
+      - ./frontend/src:/app/src:ro
+      - ./frontend/public:/app/public:ro
+
+volumes:
+  postgres_data:
+  backend_uploads:

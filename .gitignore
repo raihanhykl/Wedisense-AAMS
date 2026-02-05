@@ -59,4 +59,11 @@ logs/
 
 # Docker
 docker-compose.override.yml
-```
+
+# Docker
+.env.docker.local
+docker-compose.override.yml
+
+# Nginx SSL
+nginx/ssl/*
+!nginx/ssl/.gitkeep
